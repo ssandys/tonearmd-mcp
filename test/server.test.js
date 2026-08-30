@@ -37,7 +37,90 @@ test("a mutating tool re-reads status instead of echoing its request", async () 
   const deps = { request: async (p) => { calls.push(p.cmd); return p.cmd === "status" ? STATUS : null; } };
   const s = buildServer(deps);
   await s._testInvoke("tonearm_control", { action: "playpause" });
-  assert.deepStrictEqual(calls, ["playpause", "status"]);
+  // Asserts the INTENT, not an exact call sequence: the command is sent, and
+  // status is read afterwards. An earlier version pinned the sequence to
+  // exactly ["playpause","status"], which the settle poll legitimately broke
+  // without anything being wrong.
+  const sent = calls.indexOf("playpause");
+  assert.ok(sent !== -1, "the command must actually be sent");
+  assert.ok(calls.slice(sent + 1).includes("status"),
+    "state must be read back from the daemon, not echoed from the request");
+});
+
+test("play does not append a status line that can contradict it", async () => {
+  // LIVE-CAUGHT: the daemon reflects a play asynchronously (~52ms measured),
+  // so reading status immediately returned the PREVIOUS track. The tool said
+  // "Playing Kind Of Blue" and then, on the next line, "playing Jellybelly".
+  // playRef already confirmed played:true and knows the title -- the extra
+  // read added only a race.
+  const stale = { ...STATUS, zone: { ...STATUS.zone, now_playing: { title: "Jellybelly", artist: "SP" } } };
+  const s = buildServer({
+    request: async (p) => {
+      if (p.cmd === "status") return stale;
+      if (p.op === "search") return { ok: true, level_id: 1, rows: [{ title: "Albums", can_descend: true }] };
+      if (p.op === "enter") return { ok: true, level_id: 2, rows: [{ title: "Kind Of Blue", subtitle: "Miles Davis" }] };
+      if (p.op === "activate") return { ok: true, played: true };
+      return null;
+    },
+  });
+  const ref = Buffer.from(JSON.stringify(
+    { query: "kind of blue", category: "Albums", index: 0, title: "Kind Of Blue" })).toString("base64url");
+  const out = await s._testInvoke("tonearm_play", { ref });
+  assert.match(out.content[0].text, /Kind Of Blue/);
+  assert.ok(!out.content[0].text.includes("Jellybelly"),
+    "must not report a stale track alongside what it just started");
+});
+
+test("a command waits for the daemon to reflect it before reporting", async () => {
+  // Measured: a pause takes ~52ms to appear in status. Reporting the first
+  // read tells Claude the command did nothing.
+  let reads = 0;
+  const before = { ...STATUS, zone: { ...STATUS.zone, state: "playing" } };
+  const after = { ...STATUS, zone: { ...STATUS.zone, state: "paused" } };
+  const s = buildServer({
+    request: async (p) => {
+      if (p.cmd !== "status") return null;
+      reads += 1;
+      return reads <= 2 ? before : after;   // settles on the 3rd read
+    },
+  });
+  const out = await s._testInvoke("tonearm_control", { action: "pause" });
+  assert.match(out.content[0].text, /paused/);
+});
+
+test("pause waits for paused, not merely for any change", async () => {
+  // LIVE-CAUGHT: pausing right after a play reported "playing". The poll saw
+  // the PLAY still landing, decided something had changed, and stopped. A
+  // change is not the change the verb asked for.
+  const prior = { ...STATUS, zone: { ...STATUS.zone, state: "paused", now_playing: { title: "So What" } } };
+  const midPlay = { ...STATUS, zone: { ...STATUS.zone, state: "playing", now_playing: { title: "Mellon Collie" } } };
+  const paused = { ...STATUS, zone: { ...STATUS.zone, state: "paused", now_playing: { title: "Mellon Collie" } } };
+  let n = 0;
+  const s = buildServer({
+    request: async (p) => {
+      if (p.cmd !== "status") return null;
+      n += 1;
+      if (n === 1) return prior;
+      return n <= 3 ? midPlay : paused;
+    },
+  });
+  const out = await s._testInvoke("tonearm_control", { action: "pause" });
+  assert.match(out.content[0].text, /paused/);
+  assert.ok(!out.content[0].text.includes(": playing,"),
+    "must not report playing in response to a pause");
+});
+
+test("an unconfirmed command says so rather than contradicting the request", async () => {
+  // LIVE-CAUGHT: pause after a browse activate exceeded the bound, and the
+  // tool answered a pause with "playing". Admitting we did not see it land
+  // beats reporting the opposite of what was asked.
+  const s = buildServer({ request: async (p) => (p.cmd === "status" ? STATUS : null) });
+  const started = Date.now();
+  const out = await s._testInvoke("tonearm_control", { action: "pause" });
+  const elapsed = Date.now() - started;
+  assert.ok(elapsed < 8000, `took ${elapsed}ms; the settle bound is 3s`);
+  assert.match(out.content[0].text, /had not reflected it/);
+  assert.match(out.content[0].text, /pause/);
 });
 
 test("transfer resolves the zone name to an id before sending", async () => {
