@@ -1,0 +1,14 @@
+{
+  "name": "tonearmd-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for tonearmd: read Roon state, search the library, put music on.",
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=20" },
+  "bin": { "tonearmd-mcp": "src/server.js" },
+  "scripts": { "test": "node --test" },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "zod": "^3.25.1"
+  }
+}
