@@ -34,3 +34,10 @@ test("the flag beats the env var", () => {
 test("a non-numeric port throws rather than listening somewhere surprising", () => {
   assert.throws(() => parseListen(["--http", "banana"], {}), /port/i);
 });
+
+test("an empty TONEARM_MCP_HTTP means stdio, not defaults", () => {
+  // Set-but-empty is not undefined. A blank TONEARM_MCP_HTTP= line in a
+  // systemd EnvironmentFile or a compose file would otherwise bind
+  // 0.0.0.0:9340 without anyone asking for it.
+  assert.strictEqual(parseListen([], { TONEARM_MCP_HTTP: "" }), null);
+});

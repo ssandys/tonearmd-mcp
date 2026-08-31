@@ -27,7 +27,10 @@ const DEFAULT_LISTEN = { host: "0.0.0.0", port: 9340 };
 export function parseListen(argv, env) {
   const i = argv.indexOf("--http");
   const spec = i === -1
-    ? env.TONEARM_MCP_HTTP
+    // A set-but-EMPTY env var means stdio, not defaults. Typing --http is a
+    // decision; a blank TONEARM_MCP_HTTP= in an EnvironmentFile or a compose
+    // file is an accident, and it must not open a socket.
+    ? (env.TONEARM_MCP_HTTP || undefined)
     : (argv[i + 1] && !argv[i + 1].startsWith("-") ? argv[i + 1] : "");
   if (spec === undefined) return null;
   if (spec === "") return { ...DEFAULT_LISTEN };
