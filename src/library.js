@@ -5,9 +5,12 @@ import { EXPANDABLE, categoryIndex, buildCandidates } from "./candidates.js";
 export class RefStaleError extends Error {}
 export class DaemonRefusedError extends Error {}
 
-const SESSION = "mcp";
+const DEFAULT_SESSION = "mcp";
+// The daemon keys _browse_sessions on this (server.py:151). It rides on deps
+// rather than a parameter so every existing call site is unchanged: stdio
+// passes nothing and keeps "mcp"; the HTTP layer passes one slot per session.
 const browse = (deps, op, extra = {}) =>
-  deps.request({ cmd: "browse", session: SESSION, op, ...extra },
+  deps.request({ cmd: "browse", session: deps.session || DEFAULT_SESSION, op, ...extra },
                { timeoutMs: TIMEOUTS.browse });
 
 function assertOk(reply, what) {

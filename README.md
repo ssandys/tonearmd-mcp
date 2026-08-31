@@ -32,6 +32,52 @@ Then point your MCP client at it:
 }
 ```
 
+## Running it on the network
+
+By default the MCP client spawns this over stdio, on the same machine as
+`tonearmd`. To let MCP clients elsewhere on your LAN drive the same daemon:
+
+```bash
+node src/server.js --http          # 0.0.0.0:9340
+node src/server.js --http 9999     # another port
+node src/server.js --http 127.0.0.1:9999
+```
+
+On first start it generates a key at `~/.config/tonearm-mcp/key` (mode `0600`)
+and prints it once. On every later start it prints where to find it instead —
+read it back with `cat ~/.config/tonearm-mcp/key`. Point remote clients at the
+URL with that key as a bearer token:
+
+```json
+{
+  "mcpServers": {
+    "tonearm": {
+      "type": "http",
+      "url": "http://your-tonearm-box:9340/mcp",
+      "headers": { "Authorization": "Bearer <the key>" }
+    }
+  }
+}
+```
+
+To run it as a service, copy `systemd/tonearmd-mcp.service` to
+`~/.config/systemd/user/`, adjust `ExecStart` to your checkout path, then
+`systemctl --user enable --now tonearmd-mcp`.
+
+**This is plain HTTP, for a LAN you trust.** Anything already on the network can
+read the key and your listening history. That is a deliberate trade: TLS here
+would mean certificates every MCP client has to trust. If your network has
+guests or devices you don't trust, put a reverse proxy terminating TLS in front
+of it rather than exposing this directly.
+
+All sessions share one zone. Two clients asking for music at once get one zone
+and last-writer-wins, not two streams — see `docs/FOLLOWUPS.md` item 2.
+
+Requests carrying a non-localhost `Origin` header are refused with a bare 403,
+as DNS-rebinding protection — so a browser-based MCP client on the LAN needs a
+reverse proxy in front of this server; non-browser clients send no `Origin`
+and are unaffected.
+
 ## Tools
 
 | Tool | Arguments | What it does |
@@ -66,7 +112,7 @@ different album playing quietly.
 npm test
 ```
 
-51 tests, no network and no daemon required — the fixtures are real daemon
+96 tests, no network and no daemon required — the fixtures are real daemon
 replies captured from a live Roon Core.
 
 ## License

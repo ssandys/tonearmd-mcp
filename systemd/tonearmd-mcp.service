@@ -1,0 +1,16 @@
+[Unit]
+Description=tonearmd-mcp — MCP server for tonearmd, over HTTP
+# Politeness, not correctness: this server opens a fresh unix connection per
+# request, so a daemon that is not up yet reads as "tonearmd is not running"
+# until it is. Ordering only avoids a confusing window at login.
+After=tonearmd.service
+Wants=tonearmd.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/node %h/Src/tonearmd-mcp/src/server.js --http
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
