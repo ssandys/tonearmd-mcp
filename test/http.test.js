@@ -38,7 +38,15 @@ function spySlots(n = 8) {
 async function listening(t, opts = {}) {
   const server = createHttpServer({ request: async () => STATUS, key: KEY, ...opts });
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
-  t.after(() => new Promise((r) => server.close(r)));
+  t.after(() => new Promise((r) => {
+    // http.Server#close() waits for every socket to fully drain, and an
+    // aborted fetch() (the GET/SSE stream tests) can leave one lingering
+    // for several seconds even though the server's own `res` "close" event
+    // already fired. closeAllConnections() forces any that are left, since
+    // by teardown time every test has already made its assertions.
+    server.closeAllConnections();
+    server.close(r);
+  }));
   return `http://127.0.0.1:${server.address().port}/mcp`;
 }
 
@@ -232,4 +240,69 @@ test("a multi-byte UTF-8 body split mid-character round-trips intact", async (t)
 
   assert.ok(text.includes(`"id":"${markerId}"`),
     `the request id did not round-trip intact -- body corrupted at the chunk split: ${text}`);
+});
+
+test("malformed JSON on the initialize path returns 400, not 500", async (t) => {
+  // A bad request is the client's fault. Falling through to the generic
+  // catch and answering 500 would tell them the server broke instead.
+  const res = await fetch(await listening(t), {
+    method: "POST",
+    headers: { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: `Bearer ${KEY}` },
+    body: "{not valid json",
+  });
+  assert.strictEqual(res.status, 400);
+});
+
+test("malformed JSON to an established session returns 400, not 500", async (t) => {
+  const url = await listening(t);
+  const init = await post(url, { authorization: `Bearer ${KEY}` }, INITIALIZE);
+  const sid = init.headers.get("mcp-session-id");
+  assert.ok(sid);
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      authorization: `Bearer ${KEY}`,
+      "mcp-session-id": sid,
+    },
+    body: "{not valid json",
+  });
+  assert.strictEqual(res.status, 400);
+});
+
+test("a session whose only traffic is an open GET/SSE stream survives the sweep, then is released once the stream closes", async (t) => {
+  // lastSeen is bumped only on dispatch. handleGetRequest resolves once the
+  // notification stream is ESTABLISHED, not when it closes, so a client
+  // that opens the stream and then sends no POST for a while must not be
+  // treated as idle just because nothing bumped lastSeen since then.
+  const spy = spySlots();
+  const url = await listening(t, { slots: spy, ttlMs: 30, sweepMs: 10 });
+  const init = await post(url, { authorization: `Bearer ${KEY}` }, INITIALIZE);
+  const sid = init.headers.get("mcp-session-id");
+  assert.ok(sid);
+
+  const ac = new AbortController();
+  const streamRes = await fetch(url, {
+    method: "GET",
+    headers: { authorization: `Bearer ${KEY}`, "mcp-session-id": sid, accept: "text/event-stream" },
+    signal: ac.signal,
+  });
+  assert.strictEqual(streamRes.status, 200);
+
+  // Outlive several sweep intervals with the stream open and NO POST
+  // traffic at all. If the sweep only trusts POST-driven lastSeen, this
+  // alone is enough to trip it.
+  await new Promise((r) => setTimeout(r, 150));
+  assert.ok(!spy.released.includes(sid),
+    `released while the stream was still open: ${JSON.stringify(spy.released)}`);
+
+  // Now close the stream and confirm the session DOES eventually get
+  // swept -- otherwise this test would only prove the sweep never fires,
+  // not that it correctly distinguishes "connected" from "idle".
+  ac.abort();
+  await new Promise((r) => setTimeout(r, 150));
+  assert.ok(spy.released.includes(sid),
+    `not released after the stream closed: ${JSON.stringify(spy.released)}`);
 });

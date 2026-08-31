@@ -11,6 +11,7 @@ const SESSION_TTL_MS = 10 * 60 * 1000;
 const SWEEP_MS = 60 * 1000;
 
 class BodyTooLargeError extends Error {}
+class BadBodyError extends Error {}
 
 const readBody = (req) => new Promise((resolve, reject) => {
   const chunks = [];
@@ -43,7 +44,7 @@ const readBody = (req) => new Promise((resolve, reject) => {
     // alone. This is a music library -- "Björk", "Sigur Rós", "坂本龍一" are
     // ordinary input, not edge cases.
     try { resolve(JSON.parse(Buffer.concat(chunks).toString("utf8"))); }
-    catch { reject(new Error("body was not valid JSON")); }
+    catch { reject(new BadBodyError("body was not valid JSON")); }
   });
   req.on("error", (err) => { if (!settled) { settled = true; reject(err); } });
 });
@@ -58,11 +59,13 @@ export function createHttpServer({
 }) {
   const transports = new Map();
   const lastSeen = new Map();
+  const openStreams = new Map();   // session id -> count of open streams
 
   const drop = (id) => {
     const transport = transports.get(id);
     transports.delete(id);
     lastSeen.delete(id);
+    openStreams.delete(id);
     slots.release(id);
     return transport;
   };
@@ -83,6 +86,20 @@ export function createHttpServer({
         const existing = transports.get(sid);
         if (!existing) return deny(res, 404);
         lastSeen.set(sid, Date.now());
+
+        if (req.method === "GET") {
+          openStreams.set(sid, (openStreams.get(sid) ?? 0) + 1);
+          res.on("close", () => {
+            const left = (openStreams.get(sid) ?? 1) - 1;
+            if (left > 0) openStreams.set(sid, left);
+            else openStreams.delete(sid);
+            // Only now does the session start counting as idle. Guard on the
+            // transport still existing so a stream closing AFTER a drop cannot
+            // resurrect a lastSeen entry for a session that is gone.
+            if (transports.has(sid)) lastSeen.set(sid, Date.now());
+          });
+        }
+
         const body = req.method === "POST" ? await readBody(req) : undefined;
         return await existing.handleRequest(req, res, body);
       }
@@ -116,7 +133,9 @@ export function createHttpServer({
       // http.createServer does NOT catch a rejection from an async listener:
       // unhandled, it takes the whole process down without answering anyone.
       if (res.headersSent) return res.destroy();
-      deny(res, err instanceof BodyTooLargeError ? 413 : 500);
+      if (err instanceof BodyTooLargeError) return deny(res, 413);
+      if (err instanceof BadBodyError) return deny(res, 400);
+      deny(res, 500);
     }
   });
 
@@ -127,6 +146,7 @@ export function createHttpServer({
   const sweep = setInterval(() => {
     const cutoff = Date.now() - ttlMs;
     for (const [id, seen] of [...lastSeen]) {
+      if (openStreams.has(id)) continue;      // still connected, not idle
       if (seen <= cutoff) drop(id)?.close?.().catch(() => {});
     }
   }, sweepMs);
