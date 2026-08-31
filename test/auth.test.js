@@ -56,6 +56,60 @@ test("a key file that has been loosened is tightened on load", () => {
   assert.strictEqual(fs.statSync(p).mode & 0o777, 0o600);
 });
 
+test("a key whose mode cannot be changed does not crash the load", () => {
+  // Simulates a read-only mount (EROFS) or a file owned by someone else
+  // (EPERM): the file read fine, so chmod failing afterward must not take
+  // the whole server down at boot -- that would be worse than the exposure
+  // the enforcement itself is trying to fix. Monkey-patches fs.chmodSync
+  // rather than needing a real read-only mount, scoped to this file's path
+  // and restored in `finally` so it cannot leak into other tests.
+  const p = path.join(tmp(), "tonearm-mcp", "key");
+  const key = loadOrCreateKey(p);
+
+  const originalChmod = fs.chmodSync;
+  fs.chmodSync = (target, mode) => {
+    if (target === p) {
+      const err = new Error("EROFS: read-only file system, chmod");
+      err.code = "EROFS";
+      throw err;
+    }
+    return originalChmod(target, mode);
+  };
+  try {
+    assert.strictEqual(loadOrCreateKey(p), key);
+  } finally {
+    fs.chmodSync = originalChmod;
+  }
+});
+
+test("a loose, un-tightenable key warns on stderr", () => {
+  const p = path.join(tmp(), "tonearm-mcp", "key");
+  loadOrCreateKey(p);
+  fs.chmodSync(p, 0o644);   // loosened, and chmod below will be unable to fix it
+
+  const originalChmod = fs.chmodSync;
+  fs.chmodSync = (target, mode) => {
+    if (target === p) {
+      const err = new Error("EROFS: read-only file system, chmod");
+      err.code = "EROFS";
+      throw err;
+    }
+    return originalChmod(target, mode);
+  };
+  const originalError = console.error;
+  const logged = [];
+  console.error = (msg) => logged.push(msg);
+  try {
+    loadOrCreateKey(p);
+    assert.ok(logged.some((m) => m.includes(p) && m.includes("644")),
+      `no warning naming the file and its mode: ${JSON.stringify(logged)}`);
+  } finally {
+    console.error = originalError;
+    fs.chmodSync = originalChmod;
+    fs.chmodSync(p, 0o600);   // so the tmpdir can be cleaned up
+  }
+});
+
 test("an unreadable key file is fatal, not silently rotated", () => {
   // Generating a fresh key here would lock out every client holding the old
   // one, and present as "the key stopped working" with nothing in the log.
