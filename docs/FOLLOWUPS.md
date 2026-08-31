@@ -11,6 +11,32 @@ them.
 Gaps in `tonearmd` itself live in
 [tonearm's own follow-ups](https://github.com/ssandys/tonearm/blob/master/docs/FOLLOWUPS.md).
 
+## 2. Every HTTP session shares one zone
+
+`tonearmd` has one followed zone, one pin and one transport state, so several
+MCP sessions driving it at once get one zone and a fight over it. `tonearm_pin`
+over HTTP also still writes `pinned_zone_id` to `~/.config/tonearm/config.json`
+— a remote call repoints the bar widget on the tonearm machine. For one person
+on several machines that is the wanted behaviour; for two people it is not.
+
+The upgrade is half-built already. `BrowseSession.__init__` takes a
+`zone_id_provider` — a callable, per session, deliberately read at call time so
+a repin between browses is honoured (`browse.py:160-168`) — and `core.py:590`
+currently hands every session the same global `selected_zone_id`. Making it
+per-session is a small daemon change.
+
+What is not built is the transport half: `command(verb, arg)` (`core.py:616`)
+acts on the followed zone and takes no zone argument, so `playpause` / `pause` /
+`next` / `previous` would stay global. A session that starts music in its own
+zone but pauses the widget's is worse than not having the feature, because it
+looks like it works. Both halves or neither.
+
+Doing it also closes item 9's LRU cap, since per-session zones make the fixed
+eight-slot bound in `src/sessions.js` unnecessary.
+
+Deferred until `tonearmd` moves to its own repository, at which point the
+daemon-side changes stop being cross-repo work.
+
 ## Closed
 
 Recorded so they are not re-opened.
