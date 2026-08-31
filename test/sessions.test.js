@@ -21,11 +21,17 @@ test("claiming twice with the same id returns the same key", () => {
 });
 
 test("a released slot is handed to the next session", () => {
-  const slots = createSlots(2);
-  const first = slots.claim("a");
+  // Three slots, releasing the MOST recent, so the freed slot is deliberately
+  // not the one LRU eviction would pick. With a no-op release this returns
+  // mcp-0 (the LRU victim) instead of mcp-2, which is what makes the
+  // assertion mean something. The two-slot version of this test could not
+  // tell the two apart -- the released slot was also the eviction target.
+  const slots = createSlots(3);
+  slots.claim("a");
   slots.claim("b");
-  slots.release("a");
-  assert.strictEqual(slots.claim("c"), first);
+  const third = slots.claim("c");
+  slots.release("c");
+  assert.strictEqual(slots.claim("d"), third);
 });
 
 test("more sessions than slots reuses, never grows", () => {
@@ -52,4 +58,17 @@ test("releasing an id that holds no slot is a no-op", () => {
   slots.release("a");
   slots.release("a");
   assert.strictEqual(slots.claim("b"), a);
+});
+
+test("slots are named mcp-0 through mcp-7", () => {
+  // The constraint is on the literal key: the daemon's browse-session dict is
+  // keyed by this string, and it is what shows up when debugging against a
+  // live daemon. Every other assertion here is relational and would survive
+  // a rename.
+  const slots = createSlots();
+  const keys = [];
+  for (let i = 0; i < SLOT_COUNT; i += 1) keys.push(slots.claim(`s${i}`));
+  assert.deepStrictEqual(keys.sort(), [
+    "mcp-0", "mcp-1", "mcp-2", "mcp-3", "mcp-4", "mcp-5", "mcp-6", "mcp-7",
+  ]);
 });
