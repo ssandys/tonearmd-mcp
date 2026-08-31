@@ -27,12 +27,22 @@ export function loadOrCreateKey(p = keyPath(), onCreate = () => {}) {
       try {
         fs.chmodSync(p, 0o600);
       } catch (err) {
-        if ((fs.statSync(p).mode & 0o777) !== 0o600) {
+        // Read the mode defensively: we are already on a failure path, and a
+        // throw from here would either crash the boot (non-ENOENT, via the
+        // outer rethrow) or silently rotate a key that read fine (ENOENT, via
+        // the outer catch's generate branch). Both are worse than not knowing
+        // the mode.
+        let mode = null;
+        try { mode = fs.statSync(p).mode & 0o777; } catch { /* leave unknown */ }
+        if (mode === null) {
           console.error(
-            `tonearmd-mcp: WARNING: ${p} is mode ` +
-            `${(fs.statSync(p).mode & 0o777).toString(8)} and could not be ` +
-            `tightened (${err.code}). Anyone who can read it can drive your ` +
-            `music. Fix with: chmod 600 ${p}`);
+            `tonearmd-mcp: WARNING: ${p} could not be tightened (${err.code}) ` +
+            `and its mode could not be read. Check it with: ls -l ${p}`);
+        } else if (mode !== 0o600) {
+          console.error(
+            `tonearmd-mcp: WARNING: ${p} is mode ${mode.toString(8)} and could ` +
+            `not be tightened (${err.code}). Anyone who can read it can drive ` +
+            `your music. Fix with: chmod 600 ${p}`);
         }
       }
       return existing;

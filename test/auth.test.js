@@ -110,6 +110,48 @@ test("a loose, un-tightenable key warns on stderr", () => {
   }
 });
 
+test("a key whose mode can be neither changed nor read still loads", () => {
+  // Narrower still: chmod has already failed AND the file becomes
+  // un-statable in that same window (e.g. it vanishes between the
+  // successful readFileSync and this catch). An unguarded statSync here
+  // would either crash the boot (non-ENOENT, via the outer rethrow) or
+  // silently rotate a key that had just read fine (ENOENT, via the outer
+  // catch's generate branch) -- the two worst failure modes this file has.
+  const p = path.join(tmp(), "tonearm-mcp", "key");
+  const key = loadOrCreateKey(p);
+
+  const originalChmod = fs.chmodSync;
+  const originalStat = fs.statSync;
+  fs.chmodSync = (target, mode) => {
+    if (target === p) {
+      const err = new Error("EROFS: read-only file system, chmod");
+      err.code = "EROFS";
+      throw err;
+    }
+    return originalChmod(target, mode);
+  };
+  fs.statSync = (target, options) => {
+    if (target === p) {
+      const err = new Error("ENOENT: no such file or directory, stat");
+      err.code = "ENOENT";
+      throw err;
+    }
+    return originalStat(target, options);
+  };
+  const originalError = console.error;
+  const logged = [];
+  console.error = (msg) => logged.push(msg);
+  try {
+    assert.strictEqual(loadOrCreateKey(p), key);
+    assert.ok(logged.some((m) => m.includes(p) && m.includes("could not be read")),
+      `no warning naming the file with its mode unreadable: ${JSON.stringify(logged)}`);
+  } finally {
+    console.error = originalError;
+    fs.chmodSync = originalChmod;
+    fs.statSync = originalStat;
+  }
+});
+
 test("an unreadable key file is fatal, not silently rotated", () => {
   // Generating a fresh key here would lock out every client holding the old
   // one, and present as "the key stopped working" with nothing in the log.
