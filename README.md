@@ -36,7 +36,7 @@ Then point your MCP client at it:
 
 | Tool | Arguments | What it does |
 |---|---|---|
-| `tonearm_status` | — | What is playing, and which zones exist |
+| `tonearm_status` | — | What is playing, whether its zone is pinned, and which zones exist |
 | `tonearm_search` | `query` | Albums and tracks matching the query, each with a `ref` |
 | `tonearm_play` | `ref` | Plays a search result in the followed zone |
 | `tonearm_control` | `action` | `playpause`, `pause`, `next`, `previous` |
@@ -66,7 +66,7 @@ different album playing quietly.
 npm test
 ```
 
-46 tests, no network and no daemon required — the fixtures are real daemon
+50 tests, no network and no daemon required — the fixtures are real daemon
 replies captured from a live Roon Core.
 
 ## License

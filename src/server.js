@@ -34,12 +34,21 @@ const stateKey = (s) =>
 // live: pausing right after a play returned "playing", because the play was
 // still landing and the poll saw THAT change and stopped. A verb knows what it
 // is asking for, so it says so.
+//
+// `zone` is the sharpest case. Pinning moves neither state nor track, so the
+// default fired never for a pin already in effect -- 3s, then "had not
+// reflected it" over a pin that WAS applied -- and fired early on an unrelated
+// track change during an unpin. The pin is what the verb asked for, so a
+// predicate that reads it needs the payload, which is why they take one.
 const track = (s) => s?.zone?.now_playing?.title ?? null;
 const SETTLED = {
   pause: (_prior, now) => now?.zone?.state === "paused",
   playpause: (prior, now) => now?.zone?.state !== prior?.zone?.state,
   next: (prior, now) => track(now) !== track(prior),
   previous: (prior, now) => track(now) !== track(prior),
+  zone: (_prior, now, payload) => (payload.arg === "unpin"
+    ? now?.zone?.pinned === false
+    : now?.zone?.id === payload.arg && now?.zone?.pinned === true),
 };
 const changed = (prior, now) => stateKey(now) !== stateKey(prior);
 
@@ -63,7 +72,7 @@ async function command(deps, payload, before = null) {
   for (let i = 0; i < SETTLE_ATTEMPTS; i += 1) {
     await new Promise((r) => setTimeout(r, SETTLE_INTERVAL_MS));
     status = await readStatus(deps);
-    if (settled(prior, status)) return { status, confirmed: true };
+    if (settled(prior, status, payload)) return { status, confirmed: true };
   }
   return { status, confirmed: false };
 }
@@ -84,7 +93,11 @@ function describe(status) {
   if (!z) return "No zone is selected.";
   const np = z.now_playing;
   const what = np ? `${np.title}${np.artist ? ` — ${np.artist}` : ""}` : "nothing";
-  return `${z.name}: ${z.state}, playing ${what}`;
+  // The daemon returns `pinned` on every status reply and this dropped it, so
+  // an agent that can SET the pin could not read it back. "auto-follow" is not
+  // filler: it says the zone may change on its own before the next tool call.
+  const follow = z.pinned ? "pinned" : "auto-follow";
+  return `${z.name} (${follow}): ${z.state}, playing ${what}`;
 }
 
 export function buildServer(deps) {

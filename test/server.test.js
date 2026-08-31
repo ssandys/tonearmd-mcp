@@ -156,3 +156,64 @@ test("a daemon that is down reads as prose, not a stack trace", async () => {
   assert.match(out.content[0].text, /tonearmd is not running/);
   assert.ok(!out.content[0].text.includes("at Object."), "no stack frames");
 });
+
+test("status reports that the followed zone is pinned", async () => {
+  // The daemon returns zone.pinned in every status reply and describe() dropped
+  // it, so an agent that can SET the pin with tonearm_pin could not read it
+  // back -- answering "which zone is pinned" meant shelling out to tonearmctl.
+  const pinned = { ...STATUS, zone: { ...STATUS.zone, pinned: true } };
+  const s = buildServer({ request: async () => pinned });
+  const out = await s._testInvoke("tonearm_status", {});
+  assert.match(out.content[0].text, /pinned/);
+});
+
+test("status reports auto-follow when no zone is pinned", async () => {
+  // The other half: a hardcoded "(pinned)" would satisfy the test above while
+  // still telling Claude nothing. Auto-follow means the zone can change on its
+  // own, which is exactly what an agent needs to know before acting on it.
+  const s = buildServer({ request: async () => STATUS });
+  const out = await s._testInvoke("tonearm_status", {});
+  assert.match(out.content[0].text, /auto-follow/);
+  assert.ok(!out.content[0].text.includes("(pinned)"));
+});
+
+test("re-pinning the zone that is already pinned confirms instead of timing out", async () => {
+  // LIVE-CAUGHT 2026-08-30: `zone` had no SETTLED entry, so it fell to the
+  // default `changed` -- [zone.id, zone.state, now_playing.title]. Pinning the
+  // already-followed zone moves none of those, so the poll ran its full 3s and
+  // reported "had not reflected it" over a pin that was applied.
+  const pinned = {
+    ...STATUS,
+    zone: { ...STATUS.zone, id: "z2", name: "sonos move", pinned: true },
+  };
+  const s = buildServer({ request: async (p) => (p.cmd === "status" ? pinned : null) });
+  const started = Date.now();
+  const out = await s._testInvoke("tonearm_pin", { zone: "sonos move" });
+  const elapsed = Date.now() - started;
+  assert.ok(elapsed < 1000, `took ${elapsed}ms; an already-applied pin must not wait out the 3s bound`);
+  assert.ok(!out.content[0].text.includes("had not reflected it"),
+    "a pin that is already in effect must report as confirmed");
+});
+
+test("unpin waits for the pin to clear, not for any change", async () => {
+  // The same default-predicate bug in the other direction: a track changing
+  // while the unpin is in flight satisfies `changed`, so the poll stops early
+  // and reports a zone that is still pinned as though the unpin had landed.
+  const at = (pinned, title) => ({
+    ...STATUS,
+    zone: { ...STATUS.zone, pinned, now_playing: { title, artist: "SP" } },
+  });
+  let n = 0;
+  const s = buildServer({
+    request: async (p) => {
+      if (p.cmd !== "status") return null;
+      n += 1;
+      if (n === 1) return at(true, "So What");
+      return n <= 3 ? at(true, "Mellon Collie") : at(false, "Mellon Collie");
+    },
+  });
+  const out = await s._testInvoke("tonearm_pin", { zone: "unpin" });
+  assert.match(out.content[0].text, /auto-follow/);
+  assert.ok(!out.content[0].text.includes("(pinned)"),
+    "must not report a still-pinned zone as unpinned");
+});
