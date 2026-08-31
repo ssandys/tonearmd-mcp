@@ -7,7 +7,7 @@ import { request as socketRequest, TIMEOUTS } from "./client.js";
 import { searchLibrary, playRef } from "./library.js";
 import { resolveZone } from "./zones.js";
 import { createHttpServer } from "./http.js";
-import { loadOrCreateKey } from "./auth.js";
+import { loadOrCreateKey, keyPath } from "./auth.js";
 
 // One copy of the version, not two. tonearm's manifest reached 0.9.0 while the
 // display_version literal beside it stayed at the 0.1.0 it was written with,
@@ -210,7 +210,8 @@ export function buildServer(deps) {
 if (import.meta.url === `file://${process.argv[1]}`) {
   const listen = parseListen(process.argv.slice(2), process.env);
   if (listen) {
-    const key = loadOrCreateKey();
+    let created = false;
+    const key = loadOrCreateKey(keyPath(), () => { created = true; });
     const server = createHttpServer({ request: socketRequest, key });
     server.on("error", (err) => {
       // EADDRINUSE as a stack trace under systemd is unreadable in journalctl.
@@ -219,7 +220,10 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     });
     server.listen(listen.port, listen.host, () => {
       console.error(`tonearmd-mcp listening on http://${listen.host}:${listen.port}/mcp`);
-      console.error(`key: ${key}`);
+      // Only on generation. Printing it every start wrote the bearer secret
+      // into the journal on every restart.
+      if (created) console.error(`key (generated, shown once): ${key}`);
+      else console.error(`key: ${keyPath()}`);
     });
   } else {
     const server = buildServer({ request: socketRequest });

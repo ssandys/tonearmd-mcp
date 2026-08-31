@@ -10,11 +10,16 @@ export function keyPath() {
   return path.join(base, "tonearm-mcp", "key");
 }
 
-export function loadOrCreateKey(p = keyPath()) {
+export function loadOrCreateKey(p = keyPath(), onCreate = () => {}) {
   fs.mkdirSync(path.dirname(p), { mode: 0o700, recursive: true });
   try {
     const existing = fs.readFileSync(p, "utf8").trim();
-    if (existing) return existing;
+    // Enforce the mode on every start, not only at creation. Returning early
+    // here meant a key file that had been loosened -- by a backup tool, a
+    // careless chmod, a copy from another machine -- was served for the rest
+    // of its life at whatever mode it had, while the tests and the README both
+    // claimed 0600.
+    if (existing) { fs.chmodSync(p, 0o600); return existing; }
   } catch (err) {
     // ENOENT is the first-run case. Anything else -- EACCES, EISDIR -- must be
     // fatal: silently generating a new key here would lock out every client
@@ -23,7 +28,8 @@ export function loadOrCreateKey(p = keyPath()) {
   }
   const key = crypto.randomBytes(32).toString("hex");
   fs.writeFileSync(p, key + "\n", { mode: 0o600 });
-  fs.chmodSync(p, 0o600);   // writeFileSync's mode is subject to umask
+  fs.chmodSync(p, 0o600);   // belt-and-braces for the creation path -- writeFileSync's mode option above already set 0600
+  onCreate(key);
   return key;
 }
 

@@ -45,6 +45,17 @@ test("an existing key is reused, not regenerated", () => {
   assert.strictEqual(loadOrCreateKey(p), loadOrCreateKey(p));
 });
 
+test("a key file that has been loosened is tightened on load", () => {
+  // Measured during review: without this, chmod 0644 on an existing key file
+  // survived a restart and the server served with a world-readable key, while
+  // the suite asserted 0600 and the README promised it.
+  const p = path.join(tmp(), "tonearm-mcp", "key");
+  loadOrCreateKey(p);
+  fs.chmodSync(p, 0o644);
+  loadOrCreateKey(p);
+  assert.strictEqual(fs.statSync(p).mode & 0o777, 0o600);
+});
+
 test("an unreadable key file is fatal, not silently rotated", () => {
   // Generating a fresh key here would lock out every client holding the old
   // one, and present as "the key stopped working" with nothing in the log.

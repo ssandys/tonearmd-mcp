@@ -44,7 +44,9 @@ node src/server.js --http 127.0.0.1:9999
 ```
 
 On first start it generates a key at `~/.config/tonearm-mcp/key` (mode `0600`)
-and prints it. Point remote clients at the URL with that key as a bearer token:
+and prints it once. On every later start it prints where to find it instead —
+read it back with `cat ~/.config/tonearm-mcp/key`. Point remote clients at the
+URL with that key as a bearer token:
 
 ```json
 {
@@ -70,6 +72,11 @@ of it rather than exposing this directly.
 
 All sessions share one zone. Two clients asking for music at once get one zone
 and last-writer-wins, not two streams — see `docs/FOLLOWUPS.md` item 2.
+
+Requests carrying a non-localhost `Origin` header are refused with a bare 403,
+as DNS-rebinding protection — so a browser-based MCP client on the LAN needs a
+reverse proxy in front of this server; non-browser clients send no `Origin`
+and are unaffected.
 
 ## Tools
 

@@ -1,8 +1,9 @@
 // The daemon keeps one BrowseSession per session key and never evicts one
-// (FOLLOWUPS item 9), and offers no verb to drop one. So the key space is
-// bounded here instead: at most SLOT_COUNT keys are ever sent, no matter how
-// many MCP sessions come and go. Exceeding the pool makes two sessions share
-// a cursor -- which is exactly today's single-key behaviour, not corruption.
+// (tonearm's FOLLOWUPS item 9), and offers no verb to drop one. So the key
+// space is bounded here instead: at most SLOT_COUNT keys are ever sent, no
+// matter how many MCP sessions come and go. Exceeding the pool makes two
+// sessions share a cursor -- which is exactly today's single-key behaviour,
+// not corruption.
 export const SLOT_COUNT = 8;
 
 export function createSlots(n = SLOT_COUNT) {

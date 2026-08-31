@@ -92,6 +92,21 @@ test("an unknown session id is refused rather than silently starting a new sessi
   assert.strictEqual(spy.claimed.length, 0, `claimed: ${JSON.stringify(spy.claimed)}`);
 });
 
+test("a session-less non-initialize POST is refused rather than claiming a slot", async (t) => {
+  // The actual slot-leak vector: no mcp-session-id header at all, and a body
+  // that isn't an initialize. This is what the isInitializeRequest gate
+  // guards -- remove it and the SDK's own validation would still answer 400,
+  // but only after claiming a slot per probe, so a green suite could hide a
+  // real leak. Assert the exact code and that no slot was ever claimed --
+  // either alone can pass with the gate quietly removed.
+  const spy = spySlots();
+  const res = await post(await listening(t, { slots: spy }),
+    { authorization: `Bearer ${KEY}` },
+    { jsonrpc: "2.0", id: 3, method: "tools/list", params: {} });
+  assert.strictEqual(res.status, 400);
+  assert.strictEqual(spy.claimed.length, 0, `claimed: ${JSON.stringify(spy.claimed)}`);
+});
+
 test("two initializes are two distinct sessions", async (t) => {
   // Each session id is what a browse slot is claimed against, so collapsing
   // two clients onto one id would collapse them onto one browse cursor.

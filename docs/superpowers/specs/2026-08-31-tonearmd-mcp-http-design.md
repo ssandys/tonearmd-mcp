@@ -150,10 +150,11 @@ machines; it is a constant, not a computed bound.
 Item 9's LRU cap remains the right long-term fix and rides with the §8
 follow-up.
 
-`SESSION` therefore stops being a module constant in `library.js` and becomes a
-parameter threaded from the session, changing the `searchLibrary` / `playRef`
-signatures. This is the one place the HTTP work reaches into existing tested
-code rather than sitting beside it.
+`SESSION` therefore rides on `deps.session` instead of staying a bare module
+constant in `library.js`, read at call time by `browse()` with `"mcp"` as the
+fallback for a caller that passes none. It changes no existing call site: the
+`searchLibrary` / `playRef` signatures are untouched, and stdio callers that
+never set `deps.session` keep today's behaviour unchanged.
 
 ## 6. Error handling
 
