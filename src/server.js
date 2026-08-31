@@ -2,9 +2,16 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { createRequire } from "node:module";
 import { request as socketRequest, TIMEOUTS } from "./client.js";
 import { searchLibrary, playRef } from "./library.js";
 import { resolveZone } from "./zones.js";
+
+// One copy of the version, not two. tonearm's manifest reached 0.9.0 while the
+// display_version literal beside it stayed at the 0.1.0 it was written with,
+// because nothing connected them and nothing could notice. This is the same
+// shape, so it reads the number rather than restating it.
+export const VERSION = createRequire(import.meta.url)("../package.json").version;
 
 export const TOOL_NAMES = [
   "tonearm_status", "tonearm_search", "tonearm_play",
@@ -101,7 +108,7 @@ function describe(status) {
 }
 
 export function buildServer(deps) {
-  const server = new McpServer({ name: "tonearmd-mcp", version: "0.1.0" });
+  const server = new McpServer({ name: "tonearmd-mcp", version: VERSION });
   const handlers = {};
   // Wrap at registration, not afterwards. An earlier draft wrapped only the
   // test seam -- so a thrown UnknownZoneError would have reached the MCP

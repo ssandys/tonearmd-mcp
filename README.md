@@ -66,7 +66,7 @@ different album playing quietly.
 npm test
 ```
 
-50 tests, no network and no daemon required — the fixtures are real daemon
+51 tests, no network and no daemon required — the fixtures are real daemon
 replies captured from a live Roon Core.
 
 ## License
