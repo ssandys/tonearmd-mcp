@@ -6,6 +6,8 @@ import { createRequire } from "node:module";
 import { request as socketRequest, TIMEOUTS } from "./client.js";
 import { searchLibrary, playRef } from "./library.js";
 import { resolveZone } from "./zones.js";
+import { createHttpServer } from "./http.js";
+import { loadOrCreateKey } from "./auth.js";
 
 // One copy of the version, not two. tonearm's manifest reached 0.9.0 while the
 // display_version literal beside it stayed at the 0.1.0 it was written with,
@@ -17,6 +19,27 @@ export const TOOL_NAMES = [
   "tonearm_status", "tonearm_search", "tonearm_play",
   "tonearm_control", "tonearm_transfer", "tonearm_pin",
 ];
+
+const DEFAULT_LISTEN = { host: "0.0.0.0", port: 9340 };
+
+// null means stdio. stdio is the default because every existing install runs
+// that way: a default that listened would put this on the LAN on upgrade.
+export function parseListen(argv, env) {
+  const i = argv.indexOf("--http");
+  const spec = i === -1
+    ? env.TONEARM_MCP_HTTP
+    : (argv[i + 1] && !argv[i + 1].startsWith("-") ? argv[i + 1] : "");
+  if (spec === undefined) return null;
+  if (spec === "") return { ...DEFAULT_LISTEN };
+
+  const colon = spec.lastIndexOf(":");
+  const host = colon === -1 ? DEFAULT_LISTEN.host : spec.slice(0, colon);
+  const port = Number(colon === -1 ? spec : spec.slice(colon + 1));
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`--http: ${JSON.stringify(spec)} has no valid port`);
+  }
+  return { host, port };
+}
 
 const text = (s) => ({ content: [{ type: "text", text: s }] });
 const fail = (s) => ({ content: [{ type: "text", text: s }], isError: true });
@@ -182,6 +205,21 @@ export function buildServer(deps) {
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const server = buildServer({ request: socketRequest });
-  await server.connect(new StdioServerTransport());
+  const listen = parseListen(process.argv.slice(2), process.env);
+  if (listen) {
+    const key = loadOrCreateKey();
+    const server = createHttpServer({ request: socketRequest, key });
+    server.on("error", (err) => {
+      // EADDRINUSE as a stack trace under systemd is unreadable in journalctl.
+      console.error(`tonearmd-mcp: cannot listen on ${listen.host}:${listen.port} — ${err.message}`);
+      process.exit(1);
+    });
+    server.listen(listen.port, listen.host, () => {
+      console.error(`tonearmd-mcp listening on http://${listen.host}:${listen.port}/mcp`);
+      console.error(`key: ${key}`);
+    });
+  } else {
+    const server = buildServer({ request: socketRequest });
+    await server.connect(new StdioServerTransport());
+  }
 }
